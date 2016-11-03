@@ -1,0 +1,483 @@
+Before moving forward with running MapReduce program on the instances, let create Namenode and Datanodes.
+
+
+A. Creating instances
+	1. Click on 'Launch Instance'
+	2. Choose AMI - Under 'My AMIs', select the AMI you created before.
+	3. Choose Instance Type - t2.large
+	4. Configure Instance details - Number of Instance : 4
+	5. Add storage -  25 GB
+	6. Tag Instance - Key: Name; Value: nodes
+	7. Configure Security Group: 
+
+		Type		Protocol		Port Range			Source
+		------------------------------------------------------
+		All TCP		TCP				0 - 65535			0.0.0.0/0
+		All ICMP	ICMP			0 - 65535			0.0.0.0/0
+		SSH			TCP				22					0.0.0.0/0
+
+	8. Review and Launch
+	9. While the instances are being created, change the name of instances (see the pen next to instance name while hovering on it).
+	10. Change names to master, slave 1, slave 2, and slave 3.
+	11. Note down public dns of all the nodes.
+	12. Keep your .pem file handy. (If you haven't changed permissions of your pem file execute: chmod 400 <your-pem-file>.pem)
+
+B. Configuring the nodes
+	1. Open five terminal windows/tabs. One will be for local, others will be for master and three slaves
+	2. SSH into all the nodes: ssh -i <your-pem-file>.pem ubuntu@<public-dns> in different windows/tabs
+	3. Follow below configuration instruction:
+
+		### Local machine
+		a. nano ~/.ssh/config (Enter public dns at appropriate places - keep rest of the things same.)
+			Host namenode
+			  HostName namenode_public_dns
+			  User ubuntu
+			  IdentityFile ~/.ssh/pem_key_filename
+			Host datanode1
+			  HostName datanode1_public_dns
+			  User ubuntu
+			  IdentityFile ~/.ssh/pem_key_filename
+			Host datanode2
+			  HostName datanode2_public_dns
+			  User ubuntu
+			  IdentityFile ~/.ssh/pem_key_filename
+			Host datanode3
+			  HostName datanode3_public_dns
+			  User ubuntu
+			  IdentityFile ~/.ssh/pem_key_filename
+
+		b. Now lets transfer private key and config file(above) on master node.
+		scp -i <your-pem-file>.pem <your-pem-file>.pem ~/.ssh/config ubuntu@<master_dns>:~/.ssh
+
+		### namenode OR master node (Take care of quotes)
+		c. ssh-keygen -f ~/.ssh/id_rsa -t rsa -P ""
+		d. cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+		e. cat ~/.ssh/id_rsa.pub | ssh datanode1 'cat >> ~/.ssh/authorized_keys'
+		f. cat ~/.ssh/id_rsa.pub | ssh datanode2 'cat >> ~/.ssh/authorized_keys'
+		g. cat ~/.ssh/id_rsa.pub | ssh datanode3 'cat >> ~/.ssh/authorized_keys'
+		h. Type 'yes' upon authenticating hosts
+
+
+		### Common configuration for all nodes: master + 3 slaves
+		Instruction: Remove any indentation. Replace 'namenode_public_dns' with master's public dns.
+		
+		i. sudo nano $HADOOP_CONF_DIR/hadoop-env.sh
+				export JAVA_HOME=/usr/lib/jvm/java-8-oracle
+
+		j. sudo nano $HADOOP_CONF_DIR/core-site.xml
+				<configuration>
+					<property>
+				    	<name>fs.defaultFS</name>
+				    	<value>hdfs://namenode_public_dns:9000</value>
+					</property>
+				</configuration>
+
+  		k. sudo nano $HADOOP_CONF_DIR/yarn-site.xml
+		  		<configuration>
+				<! — Site specific YARN configuration properties →
+					<property>
+				    	<name>yarn.nodemanager.aux-services</name>
+				    	<value>mapreduce_shuffle</value>
+				  	</property> 
+				  	<property>
+				    	<name>yarn.nodemanager.aux-services.mapreduce.shuffle.class</name>
+				    	<value>org.apache.hadoop.mapred.ShuffleHandler</value>
+				  	</property>
+				  	<property>
+				    	<name>yarn.resourcemanager.hostname</name>
+				    	<value>namenode_public_dns</value>
+				  	</property>
+				</configuration>
+
+		l. Create mapred-site.xml from its template
+		sudo cp $HADOOP_CONF_DIR/mapred-site.xml.template $HADOOP_CONF_DIR/mapred-site.xml
+		
+		m. sudo nano $HADOOP_CONF_DIR/mapred-site.xml
+				<configuration>
+					<property>
+				    	<name>mapreduce.jobtracker.address</name>
+				    	<value>namenode_public_dns:54311</value>
+				  	</property>
+					<property>
+				    	<name>mapreduce.framework.name</name>
+				    	<value>yarn</value>
+					</property>
+				</configuration>
+
+		n. Save output of echo $(hostname) from all nodes to a file.
+
+		### Namenode specific. ONLY for master node.
+		### hostname refers to hostname we got in step (n) above. Replace appropriately. It starts with ip-xxx-xxx-xxx-xxx
+		o. Add hosts:	sudo nano /etc/hosts
+			127.0.0.1 localhost
+			namenode_public_dns namenode_hostname
+			datanode1_public_dns datanode1_hostname
+			datanode2_public_dns datanode2_hostname
+			datanode3_public_dns datanode3_hostname
+
+			# (Dont remove any lines from the file)
+
+		p. sudo nano $HADOOP_CONF_DIR/hdfs-site.xml (keep it as it is)
+				<configuration>
+				  	<property>
+				    	<name>dfs.replication</name>
+				    	<value>3</value>
+				  	</property>
+				  	<property>
+				    	<name>dfs.namenode.name.dir</name>
+				    	<value>file:///usr/local/hadoop/hadoop_data/hdfs/namenode</value>
+				  	</property>
+				</configuration>
+
+		q. sudo mkdir -p $HADOOP_HOME/hadoop_data/hdfs/namenode
+		r. sudo touch $HADOOP_CONF_DIR/masters
+		s. sudo nano $HADOOP_CONF_DIR/masters
+				namenode_hostname
+
+		t. sudo nano $HADOOP_CONF_DIR/slaves
+				datanode1_hostname
+				datanode2_hostname
+				datanode3_hostname
+
+		u. sudo chown -R ubuntu $HADOOP_HOME
+
+
+		### Datanode specific configuration. ONLY for all slaves
+		### Perform following configuration in all slaves
+
+		v. sudo nano $HADOOP_CONF_DIR/hdfs-site.xml (Keep it as it is)
+				<configuration>
+				  	<property>
+				  		<name>dfs.replication</name>
+				  		<value>3</value>
+				 	</property>
+					<property>
+				 	   <name>dfs.datanode.data.dir</name>
+				 	   <value>file:///usr/local/hadoop/hadoop_data/hdfs/datanode</value>
+					</property>
+				</configuration>
+
+		w. sudo mkdir -p $HADOOP_HOME/hadoop_data/hdfs/datanode
+		x. sudo chown -R ubuntu $HADOOP_HOME
+
+
+C. Running Hadoop Cluster
+	### ON MASTER Node
+	1. hdfs namenode -format
+	2. $HADOOP_HOME/sbin/start-dfs.sh
+	3. Type 'yes' upon asking for authentication verification
+	4. Go to <master-node-public-dns>:50070 to see three live nodes
+
+D. Run Yarn and MapReduce JobHistory server
+	### On MASTER Node
+	1. $HADOOP_HOME/sbin/start-yarn.sh
+	2. $HADOOP_HOME/sbin/mr-jobhistory-daemon.sh start historyserver
+	3. jps command will show all java processes running
+
+E. Copying files and creating HDFS user
+	1. Create input directory on master node
+		mkdir input
+	
+	2. You can find all required jar files in the attached zip or download from following links:
+		a. Hadoop Jar file: https://drive.google.com/file/d/0B_XCtvnM5S8ZYkhfRlR6eWlNQWM/view?usp=sharing
+		b. Guava Jar file: http://search.maven.org/remotecontent?filepath=com/google/guava/guava/19.0/guava-19.0.jar
+		c. wordtest.jar: This jar is created in eclipse after importing above two jars. It has two classes: WordCount and DominantCategory
+
+
+	2. Copy states, .jar file from local machine
+		scp -i <your-pem-file>.pem input/* ubuntu@<master_dns>:~/input/
+		scp -i <your-pem-file>.pem wordtest.jar ubuntu@<master_dns>:~/
+		scp -i <your-pem-file>.pem guava-19.0.jar ubuntu@<master_dns>:~/
+
+	3. Store the states in hdfs directory
+		hdfs dfs -mkdir -p /user/krutarth/wordcount/input/
+		hdfs dfs -copyFromLocal input/* /user/krutarth/wordcount/input/
+
+	4. Run the program.
+
+		# Run: hadoop jar wordtest.jar wordcount.WordCount /user/krutarth/wordcount/input /user/krutarth/wordcount/output
+		
+		# Run: hdfs dfs -cat /user/krutarth/wordcount/output/* > midop.txt
+		
+		# Run: cat midop.txt
+		
+		# Snapshot output of midop.txt. This is the output from reducer.
+				Alabama:agriculture	7
+				Alabama:education	35
+				Alabama:politics	11
+				Alabama:sports	13
+				Alaska:agriculture	7
+				Alaska:education	7
+				Alaska:politics	10
+				Alaska:sports	3
+				Arizona:agriculture	1
+				Arizona:education	21
+				Arizona:politics	9
+				Arizona:sports	12
+				... (truncated to few lines)
+
+		# Run: java -cp guava-19.0.jar:.:wordtest.jar wordcount.DominantCategory
+
+		# Complete output:
+			Number of states having Agriculture dominant: 1
+			Number of states having Education dominant: 22
+			Number of states having Sports dominant: 11
+			Number of states having Politics dominant: 16
+
+			Following are the states having same ranks: 
+			sports > education > politics > agriculture::-> [New_Jersey, Oregon, Montana, Kansas, Illinois, Connecticut]
+			politics > sports > education > agriculture::-> [Rhode_Island, New_Hampshire, Ohio, Georgia, Utah]
+			education > agriculture > politics > sports::-> [Vermont, Washington, Michigan]
+			education > agriculture > sports > politics::-> [Virginia]
+			sports > education > agriculture > politics::-> [Oklahoma]
+			agriculture > education > sports > politics::-> [Iowa]
+			sports > politics > agriculture > education::-> [Colorado, Nebraska]
+			politics > education > sports > agriculture::-> [Texas, Maine, North_Carolina, New_York, Florida, Idaho, Nevada]
+			politics > sports > agriculture > education::-> [Wisconsin]
+			politics > education > agriculture > sports::-> [Wyoming]
+			politics > agriculture > education > sports::-> [Alaska, North_Dakota]
+			sports > politics > education > agriculture::-> [Indiana, Minnesota]
+			education > politics > sports > agriculture::-> [Hawaii, South_Carolina, West_Virginia, New_Mexico, Massachusetts, Kentucky]
+			education > sports > agriculture > politics::-> [Pennsylvania]
+			education > politics > agriculture > sports::-> [Arkansas, Mississippi, Tennessee]
+			education > sports > politics > agriculture::-> [South_Dakota, Missouri, Louisiana, California, Delaware, Alabama, Maryland, Arizona]
+
+		# Output explanation
+			I have not taken html-tags into consideration. I tried my best to remove any keywords ('agriculture', 'education' etc.) from the html tags. I used regex to exclude such results.
+
+			My code is space efficient. It doesn't output (keyword 1) as output from mapper but (keyword <count-in-that-line>). It counts number of keywords in that line and writes it as from mapper.
+
+			First four lines from above output shows number of states for which particular keyword was dominant than other three keywords.
+
+			Rest of the lines shows the states that has same keywords ranks. For eg. Vermont, Washington and Michigan has same keyword ranks: education > agriculture > politics > sports
+
+			Guava jar file is used to simply swap keys and values in the dictionary. Datastructure used in the program is 
+
+		# Complete outputs
+			### OUTPUT From hadoop MapReduce. Ques.2.a part-1
+
+				Alabama:agriculture	7
+				Alabama:education	35
+				Alabama:politics	11
+				Alabama:sports	13
+				Alaska:agriculture	7
+				Alaska:education	7
+				Alaska:politics	10
+				Alaska:sports	3
+				Arizona:agriculture	1
+				Arizona:education	21
+				Arizona:politics	9
+				Arizona:sports	12
+				Arkansas:agriculture	8
+				Arkansas:education	29
+				Arkansas:politics	16
+				Arkansas:sports	8
+				California:agriculture	8
+				California:education	21
+				California:politics	12
+				California:sports	19
+				Colorado:agriculture	7
+				Colorado:education	6
+				Colorado:politics	11
+				Colorado:sports	15
+				Connecticut:agriculture	2
+				Connecticut:education	10
+				Connecticut:politics	7
+				Connecticut:sports	27
+				Delaware:agriculture	4
+				Delaware:education	12
+				Delaware:politics	6
+				Delaware:sports	7
+				Florida:agriculture	9
+				Florida:education	12
+				Florida:politics	13
+				Florida:sports	11
+				Georgia:agriculture	4
+				Georgia:education	6
+				Georgia:politics	10
+				Georgia:sports	10
+				Hawaii:agriculture	3
+				Hawaii:education	20
+				Hawaii:politics	9
+				Hawaii:sports	4
+				Idaho:agriculture	3
+				Idaho:education	6
+				Idaho:politics	8
+				Idaho:sports	4
+				Illinois:agriculture	6
+				Illinois:education	16
+				Illinois:politics	13
+				Illinois:sports	17
+				Indiana:agriculture	2
+				Indiana:education	4
+				Indiana:politics	4
+				Indiana:sports	10
+				Iowa:agriculture	17
+				Iowa:education	16
+				Iowa:politics	6
+				Iowa:sports	8
+				Kansas:agriculture	3
+				Kansas:education	13
+				Kansas:politics	8
+				Kansas:sports	16
+				Kentucky:agriculture	4
+				Kentucky:education	27
+				Kentucky:politics	13
+				Kentucky:sports	6
+				Louisiana:agriculture	6
+				Louisiana:education	13
+				Louisiana:politics	7
+				Louisiana:sports	9
+				Maine:agriculture	2
+				Maine:education	5
+				Maine:politics	8
+				Maine:sports	5
+				Maryland:agriculture	2
+				Maryland:education	20
+				Maryland:politics	7
+				Maryland:sports	11
+				Massachusetts:agriculture	8
+				Massachusetts:education	24
+				Massachusetts:politics	19
+				Massachusetts:sports	12
+				Michigan:agriculture	10
+				Michigan:education	15
+				Michigan:politics	10
+				Michigan:sports	7
+				Minnesota:agriculture	6
+				Minnesota:education	8
+				Minnesota:politics	9
+				Minnesota:sports	19
+				Mississippi:agriculture	6
+				Mississippi:education	15
+				Mississippi:politics	9
+				Mississippi:sports	3
+				Missouri:agriculture	4
+				Missouri:education	17
+				Missouri:politics	7
+				Missouri:sports	11
+				Montana:agriculture	6
+				Montana:education	19
+				Montana:politics	9
+				Montana:sports	32
+				Nebraska:agriculture	6
+				Nebraska:education	6
+				Nebraska:politics	12
+				Nebraska:sports	17
+				Nevada:agriculture	4
+				Nevada:education	8
+				Nevada:politics	14
+				Nevada:sports	8
+				New_Hampshire:agriculture	1
+				New_Hampshire:education	7
+				New_Hampshire:politics	12
+				New_Hampshire:sports	8
+				New_Jersey:agriculture	2
+				New_Jersey:education	22
+				New_Jersey:politics	10
+				New_Jersey:sports	35
+				New_Mexico:agriculture	2
+				New_Mexico:education	11
+				New_Mexico:politics	5
+				New_Mexico:sports	5
+				New_York:agriculture	2
+				New_York:education	11
+				New_York:politics	11
+				New_York:sports	6
+				North_Carolina:agriculture	9
+				North_Carolina:education	12
+				North_Carolina:politics	14
+				North_Carolina:sports	12
+				North_Dakota:agriculture	11
+				North_Dakota:education	7
+				North_Dakota:politics	12
+				North_Dakota:sports	1
+				Ohio:agriculture	3
+				Ohio:education	11
+				Ohio:politics	18
+				Ohio:sports	12
+				Oklahoma:agriculture	18
+				Oklahoma:education	21
+				Oklahoma:politics	9
+				Oklahoma:sports	22
+				Oregon:agriculture	5
+				Oregon:education	11
+				Oregon:politics	9
+				Oregon:sports	12
+				Pennsylvania:agriculture	7
+				Pennsylvania:education	17
+				Pennsylvania:politics	6
+				Pennsylvania:sports	9
+				Rhode_Island:agriculture	0
+				Rhode_Island:education	4
+				Rhode_Island:politics	7
+				Rhode_Island:sports	7
+				South_Carolina:agriculture	1
+				South_Carolina:education	24
+				South_Carolina:politics	15
+				South_Carolina:sports	9
+				South_Dakota:agriculture	7
+				South_Dakota:education	15
+				South_Dakota:politics	11
+				South_Dakota:sports	14
+				Tennessee:agriculture	7
+				Tennessee:education	11
+				Tennessee:politics	10
+				Tennessee:sports	4
+				Texas:agriculture	7
+				Texas:education	31
+				Texas:politics	48
+				Texas:sports	16
+				Utah:agriculture	1
+				Utah:education	5
+				Utah:politics	11
+				Utah:sports	9
+				Vermont:agriculture	13
+				Vermont:education	15
+				Vermont:politics	13
+				Vermont:sports	12
+				Virginia:agriculture	16
+				Virginia:education	28
+				Virginia:politics	13
+				Virginia:sports	16
+				Washington:agriculture	6
+				Washington:education	15
+				Washington:politics	6
+				Washington:sports	6
+				West_Virginia:agriculture	2
+				West_Virginia:education	12
+				West_Virginia:politics	10
+				West_Virginia:sports	3
+				Wisconsin:agriculture	13
+				Wisconsin:education	8
+				Wisconsin:politics	16
+				Wisconsin:sports	14
+				Wyoming:agriculture	3
+				Wyoming:education	8
+				Wyoming:politics	8
+				Wyoming:sports	3
+
+			### Output of Ques.2.a (Part-2)
+			Number of states having Agriculture dominant: 1
+			Number of states having Education dominant: 22
+			Number of states having Sports dominant: 11
+			Number of states having Politics dominant: 16
+
+			### Output of Ques.2.b
+			Following are the states having same ranks: 
+			sports > education > politics > agriculture::-> [New_Jersey, Oregon, Montana, Kansas, Illinois, Connecticut]
+			politics > sports > education > agriculture::-> [Rhode_Island, New_Hampshire, Ohio, Georgia, Utah]
+			education > agriculture > politics > sports::-> [Vermont, Washington, Michigan]
+			education > agriculture > sports > politics::-> [Virginia]
+			sports > education > agriculture > politics::-> [Oklahoma]
+			agriculture > education > sports > politics::-> [Iowa]
+			sports > politics > agriculture > education::-> [Colorado, Nebraska]
+			politics > education > sports > agriculture::-> [Texas, Maine, North_Carolina, New_York, Florida, Idaho, Nevada]
+			politics > sports > agriculture > education::-> [Wisconsin]
+			politics > education > agriculture > sports::-> [Wyoming]
+			politics > agriculture > education > sports::-> [Alaska, North_Dakota]
+			sports > politics > education > agriculture::-> [Indiana, Minnesota]
+			education > politics > sports > agriculture::-> [Hawaii, South_Carolina, West_Virginia, New_Mexico, Massachusetts, Kentucky]
+			education > sports > agriculture > politics::-> [Pennsylvania]
+			education > politics > agriculture > sports::-> [Arkansas, Mississippi, Tennessee]
+			education > sports > politics > agriculture::-> [South_Dakota, Missouri, Louisiana, California, Delaware, Alabama, Maryland, Arizona]

@@ -1,0 +1,89 @@
+In order to create an AMI, perform following steps.
+
+A. Creating an instance
+	1. Click on Launch Instance on EC2
+	2. Choose AMI - Ubuntu Server 14.04 LTS
+	3. Choose Instance Type - General Purpose t2.micro (Free Tier)
+	4. Configure Instance Details - default
+	5. Add Storage - 8GB
+	6. Tag Instance - Key: Name and Value: HadpInstance
+	7. Configure Security Group - Add following rules
+
+		Type		Protocol		Port Range			Source
+		------------------------------------------------------
+		All TCP		TCP				0 - 65535			0.0.0.0/0
+		All ICMP	ICMP			0 - 65535			0.0.0.0/0
+		SSH			TCP				22					0.0.0.0/0
+
+	8. Launch
+	9. It will ask your .pem file. Please select the one that you have.
+
+B. SSH into the instance
+Command: ssh -i <your-pem-file.pem> ubuntu@<instance-public-dns>
+Type 'yes' upon host verification prompt.
+
+Once you ssh into the instance, execute following commands.
+	1. sudo apt-get update
+	
+	### This will install java-8-oracle
+	2. sudo add-apt-repository ppa:webupd8team/java -y
+	3. sudo apt-get update
+	4. sudo apt-get install oracle-java8-installer
+	5. sudo apt-get install oracle-java8-set-default
+
+	### Install Hadoop 2.7.3 (latest stable version)
+	6. wget http://apache.mirrors.tds.net/hadoop/common/hadoop-2.7.3/hadoop-2.7.3.tar.gz -P ~/Downloads
+	7. sudo tar zxvf ~/Downloads/hadoop-* -C /usr/local
+	8. sudo mv /usr/local/hadoop-* /usr/local/hadoop
+
+	### Update environment variables
+	9. nano ~/.profile (Paste below lines in this file - remove any indentation)
+		export JAVA_HOME=/usr/lib/jvm/java-8-oracle
+		export PATH=$PATH:$JAVA_HOME/bin
+		export HADOOP_HOME=/usr/local/hadoop
+		export PATH=$PATH:$HADOOP_HOME/bin
+		export HADOOP_CONF_DIR=/usr/local/hadoop/etc/hadoop
+	10. . ~/.profile
+
+Checklist - these commands shall give version of software installed!
+	1. java -version
+	2. hadoop version
+
+Before we move forward to upload image on S3 and create AMI, lets get required certificates for it.
+	1. X.509 certificates
+	2. Access key and Secure Access key
+	3. Go to 'Security Credentials' and download all the certificates. You should have downloaded three files - pk-xxxxxxxxxxxxxxxxxxx.pem, cert-xxxxxxxxxxxxxxxxxxx.pem and xxxx.csv
+	4. Go to 'My Account' page and copy your AWS account id.
+	5. Also, go to S3 page and create a bucket
+
+Now that Hadoop and Java is installed, lets upload the image on S3. The steps for that are following.
+	### From your instance
+	1. sudo apt-get update -y && sudo apt-get install -y ruby unzip
+	2. wget http://s3.amazonaws.com/ec2-downloads/ec2-ami-tools.zip
+	3. sudo mkdir -p /usr/local/ec2
+	4. sudo unzip ec2-ami-tools.zip -d /usr/local/ec2
+	5. export EC2_AMITOOL_HOME=/usr/local/ec2/ec2-ami-tools-1.5.7
+	6. export PATH=$EC2_AMITOOL_HOME/bin:$PATH
+	7. ec2-ami-tools-version
+	(This will show version of ec2-ami tools)
+
+	8. sudo apt-get install -y grub gdisk kpartx parted
+	9. mkdir /tmp/cert
+	
+	### From your local terminal
+	10. scp -i <your-pem-file>.pem pk-xxxxxxxxxxxxxxxxxxxxxxxxxxx.pem cert-xxxxxxxxxxxxxxxxxxxx.pem ubuntu@<your-public-dns>:/tmp/cert/
+
+	### From your instance
+	11. sudo -E su
+	12. $EC2_AMITOOL_HOME/bin/ec2-bundle-vol -k /tmp/cert/pk-xxxxxxxxxxxxxxxxxxxxx.pem -c /tmp/cert/cert-xxxxxxxxxxxxxxxxxxxxxxxxx.pem -u <your-aws-account-id> -r x86_64 -e /tmp/cert --partition gpt
+	(This will take few minutes to create a bundle of the image)
+	13. exit
+	14. ec2-upload-bundle -b <your-bucket-name> -m /tmp/image.manifest.xml -a <your-access-key> -s <your-secret-access-key>
+	(This will upload your bundle on S3 in the given bucket name)
+
+Now that image is uploaded on S3, lets create an AMI of the same instance. Press 'Ctrl+D' on your instance (LogOut). 
+	1. Go to AWS EC2 Console.
+	2. Select the instance on which you executed above steps
+	3. Go to Actions > Image > Create Image
+	4. Give this AMI a name and remember it.
+	4. This will create an AMI for you
